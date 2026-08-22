@@ -6,6 +6,34 @@ function escapeHtml(value) {
   return value.replace(/[&<>'"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[c]));
 }
 
+async function verifyWorkerConnection() {
+  const apiUrl = window.KOTOHA_CONFIG?.API_URL;
+  if (!apiUrl || apiUrl.includes('REPLACE_WITH')) {
+    return { ok: false, error: 'Cloudflare Worker URLがまだ設定されていません。' };
+  }
+
+  const { data: sessionData, error: sessionError } = await client.auth.getSession();
+  if (sessionError || !sessionData?.session?.access_token) {
+    return { ok: false, error: 'ログインセッションを取得できませんでした。' };
+  }
+
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${sessionData.session.access_token}`
+    },
+    body: JSON.stringify({ action: 'auth_test' })
+  });
+
+  const result = await response.json().catch(() => ({ ok: false, error: 'WorkerからJSON応答を取得できませんでした。' }));
+  return result;
+}
+
+function escapeHtml(value) {
+  return value.replace(/[&<>'"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[c]));
+}
+
 async function createConversation() {
   const { data, error } = await client.from('conversations').insert({ user_id: currentUser.id }).select().single();
   if (error) throw error;
@@ -45,6 +73,16 @@ async function initChat() {
   if (!currentUser) return;
   document.querySelector('#signout-button').addEventListener('click', window.kotohaAuth.signOut);
   document.querySelector('#new-chat').addEventListener('click', createConversation);
+
+  const workerResult = await verifyWorkerConnection();
+  const note = document.querySelector('#worker-status');
+  if (note) {
+    note.textContent = workerResult.ok
+      ? `サーバー接続確認: 成功（${workerResult.user?.role || 'user'}）`
+      : `サーバー接続確認: ${workerResult.error || '失敗'}`;
+  }
+  console.log('Kotoha Worker auth test:', workerResult);
+
   document.querySelector('#chat-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const input = document.querySelector('#message-input');

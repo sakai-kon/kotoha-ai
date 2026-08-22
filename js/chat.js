@@ -3,37 +3,58 @@ let currentUser = null;
 let currentConversationId = null;
 
 function escapeHtml(value) {
-  return value.replace(/[&<>'"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[c]));
+  return String(value ?? '').replace(/[&<>'"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;' }[c]));
+}
+
+function withTimeout(promise, ms, message) {
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timeoutId));
 }
 
 async function verifyWorkerConnection() {
   const apiUrl = window.KOTOHA_CONFIG?.API_URL;
-  if (!apiUrl || apiUrl.includes('REPLACE_WITH')) return { ok: false, error: 'Cloudflare Worker URLがまだ設定されていません。' };
+  if (!apiUrl || apiUrl.includes('REPLACE_WITH')) {
+    return { ok: false, error: 'Cloudflare Worker URLがまだ設定されていません。' };
+  }
 
   try {
-    const { data: sessionData, error: sessionError } = await client.auth.getSession();
-    if (sessionError || !sessionData?.session?.access_token) return { ok: false, error: 'ログインセッションを取得できませんでした。' };
+    const { data: sessionData, error: sessionError } = await withTimeout(
+      client.auth.getSession(),
+      5000,
+      'Supabaseセッション取得が5秒以内に完了しませんでした。'
+    );
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
-    let response;
-    try {
-      response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${sessionData.session.access_token}` },
-        body: JSON.stringify({ action: 'auth_test' }),
-        signal: controller.signal
-      });
-    } finally {
-      clearTimeout(timeoutId);
+    if (sessionError || !sessionData?.session?.access_token) {
+      return { ok: false, error: 'ログインセッションを取得できませんでした。' };
     }
 
-    const result = await response.json().catch(() => ({ ok: false, error: 'WorkerからJSON応答を取得できませんでした。' }));
-    if (!response.ok && !result.error) result.error = `Worker error: ${response.status}`;
+    const response = await withTimeout(
+      fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionData.session.access_token}`
+        },
+        body: JSON.stringify({ action: 'auth_test' })
+      }),
+      10000,
+      'Cloudflare Workerが10秒以内に応答しませんでした。'
+    );
+
+    const result = await response.json().catch(() => ({
+      ok: false,
+      error: 'WorkerからJSON応答を取得できませんでした。'
+    }));
+
+    if (!response.ok && !result.error) {
+      result.error = `Worker error: ${response.status}`;
+    }
     return result;
   } catch (error) {
-    if (error.name === 'AbortError') return { ok: false, error: 'Workerへの接続が10秒以内に完了しませんでした。' };
-    return { ok: false, error: `Worker接続エラー: ${error.message || '不明なエラー'}` };
+    return { ok: false, error: error.message || 'Worker接続中に不明なエラーが発生しました。' };
   }
 }
 
@@ -72,15 +93,26 @@ async function loadUsage() {
 }
 
 async function initChat() {
-  currentUser = await window.kotohaAuth.requireUser();
+  const note = document.querySelector('#worker-status');
+  if (note) note.textContent = 'ログイン状態を確認中…';
+
+  currentUser = await withTimeout(
+    window.kotohaAuth.requireUser(),
+    10000,
+    'ログイン状態の確認が10秒以内に完了しませんでした。'
+  );
   if (!currentUser) return;
+
   document.querySelector('#signout-button').addEventListener('click', window.kotohaAuth.signOut);
   document.querySelector('#new-chat').addEventListener('click', createConversation);
 
-  const note = document.querySelector('#worker-status');
-  if (note) note.textContent = 'サーバー接続を確認中…';
+  if (note) note.textContent = 'Cloudflare Workerに接続中…';
   const workerResult = await verifyWorkerConnection();
-  if (note) note.textContent = workerResult.ok ? `🟢 サーバー接続確認: 成功（${workerResult.user?.role || 'user'}）` : `🔴 サーバー接続確認: ${workerResult.error || '失敗'}`;
+  if (note) {
+    note.textContent = workerResult.ok
+      ? `🟢 サーバー接続確認: 成功（${workerResult.user?.role || 'user'}）`
+      : `🔴 サーバー接続確認: ${workerResult.error || '失敗'}`;
+  }
   console.log('Kotoha Worker auth test:', workerResult);
 
   document.querySelector('#chat-form').addEventListener('submit', async (event) => {
@@ -94,6 +126,7 @@ async function initChat() {
     input.value = '';
     await openConversation(currentConversationId);
   });
+
   await loadConversations();
   await loadUsage();
   if (!currentConversationId) await createConversation();
@@ -102,5 +135,5 @@ async function initChat() {
 initChat().catch(error => {
   console.error(error);
   const note = document.querySelector('#worker-status');
-  if (note && note.textContent.includes('確認中')) note.textContent = `🔴 初期化エラー: ${error.message || '不明なエラー'}`;
+  if (note) note.textContent = `🔴 初期化エラー: ${error.message || '不明なエラー'}`;
 });

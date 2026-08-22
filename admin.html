@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>管理 | Kotoha AI</title><link rel="stylesheet" href="css/style.css" /></head>
+<body>
+<main class="dashboard-shell">
+  <header class="dashboard-header"><a class="logo" href="chat.html">Kotoha AI</a><h1>管理ダッシュボード</h1></header>
+  <div id="admin-guard" class="status">権限を確認しています…</div>
+  <section id="admin-content" hidden class="dashboard-grid">
+    <article class="panel"><h2>通常の利用制限</h2><div id="usage-policy"></div></article>
+    <article class="panel"><h2>特別期間</h2><div id="special-periods"></div></article>
+    <article class="panel"><h2>管理ログ</h2><div id="admin-logs"></div></article>
+  </section>
+</main>
+<script src="js/config.js"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="js/supabase.js"></script><script src="js/auth.js"></script><script src="js/admin.js"></script>
+</body></html>

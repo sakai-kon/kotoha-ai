@@ -4,5 +4,5 @@ window.KOTOHA_CONFIG = {
   // GitHub Pages production URL. OAuth must never fall back to localhost.
   APP_URL: 'https://sakai-kon.github.io/kotoha-ai/',
   // Cloudflare Worker public endpoint. This contains no secret.
-  API_URL: 'REPLACE_WITH_YOUR_CLOUDFLARE_WORKER_URL'
+  API_URL: 'https://snowy-tree-654c.shigeda-kon.workers.dev/'
 };

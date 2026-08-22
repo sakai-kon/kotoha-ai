@@ -17,13 +17,18 @@
     </div>
   </aside>
   <main class="chat-main">
-    <header class="chat-header"><h1 id="conversation-title">新しいチャット</h1></header>
+    <header class="chat-header">
+      <div>
+        <h1 id="conversation-title">新しいチャット</h1>
+        <p id="worker-status" class="composer-note" role="status" aria-live="polite">サーバー接続を確認中…</p>
+      </div>
+    </header>
     <section id="message-list" class="message-list" aria-live="polite"></section>
     <form id="chat-form" class="composer">
       <textarea id="message-input" rows="1" placeholder="Kotoha AIに質問…" required></textarea>
       <button id="send-button" class="button primary" type="submit">送信</button>
     </form>
-    <p class="composer-note">AI機能のサーバー接続は次のフェーズで有効化されます。</p>
+    <p class="composer-note">現在はログイン認証とサーバー接続を確認中です。</p>
   </main>
   <script src="js/config.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

@@ -20,7 +20,7 @@
     <header class="chat-header">
       <div>
         <h1 id="conversation-title">新しいチャット</h1>
-        <p id="worker-status" class="composer-note" role="status" aria-live="polite">サーバー接続を確認中…</p>
+        <p id="worker-status" class="composer-note" role="status" aria-live="polite">読み込みを開始しています…</p>
       </div>
     </header>
     <section id="message-list" class="message-list" aria-live="polite"></section>
@@ -28,12 +28,12 @@
       <textarea id="message-input" rows="1" placeholder="Kotoha AIに質問…" required></textarea>
       <button id="send-button" class="button primary" type="submit">送信</button>
     </form>
-    <p class="composer-note">現在はログイン認証とサーバー接続を確認中です。</p>
+    <p class="composer-note">ログイン認証とサーバー接続を確認します。</p>
   </main>
-  <script src="js/config.js"></script>
+  <script src="js/config.js?v=2"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="js/supabase.js"></script>
-  <script src="js/auth.js"></script>
-  <script src="js/chat.js"></script>
+  <script src="js/supabase.js?v=2"></script>
+  <script src="js/auth.js?v=2"></script>
+  <script src="js/chat.js?v=3"></script>
 </body>
 </html>

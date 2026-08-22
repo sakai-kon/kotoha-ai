@@ -12,13 +12,16 @@
       <a class="back-link" href="index.html">← ホームへ戻る</a>
       <p class="eyebrow">KOTOHA AI</p>
       <h1>ログイン</h1>
-      <p class="muted">安全なAI環境を利用するにはログインしてください。</p>
+      <p class="muted">一般ユーザーはKotoha AI IDでログインできます。管理者はGitHubでログインしてください。</p>
+
       <form id="auth-form" class="stack">
-        <label>メールアドレス<input id="email" type="email" autocomplete="email" required /></label>
+        <label>Kotoha AI ID<input id="username" type="text" autocomplete="username" minlength="3" maxlength="32" required /></label>
         <label>パスワード<input id="password" type="password" autocomplete="current-password" minlength="8" required /></label>
-        <button class="button primary" type="submit">ログイン</button>
+        <button id="password-login-button" class="button primary" type="submit">ログイン</button>
       </form>
-      <button id="signup-button" class="button secondary full" type="button">新しく登録する</button>
+
+      <div class="auth-divider"><span>または</span></div>
+      <button id="github-login-button" class="button secondary full" type="button">GitHubでログイン（管理者）</button>
       <p id="auth-status" class="status" aria-live="polite"></p>
     </section>
   </main>

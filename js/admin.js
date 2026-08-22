@@ -1,24 +1,11 @@
-const client = window.supabaseClient;
-
-async function initAdmin() {
-  const user = await window.kotohaAuth.requireUser();
-  if (!user) return;
-  const { data: profile } = await client.from('profiles').select('role').eq('id', user.id).single();
-  const guard = document.querySelector('#admin-guard');
-  if (!profile || profile.role !== 'admin') {
-    guard.textContent = 'このページにアクセスする権限がありません。';
-    return;
-  }
-  guard.hidden = true;
-  document.querySelector('#admin-content').hidden = false;
-  const [policyRes, periodsRes, logsRes] = await Promise.all([
-    client.from('usage_policies').select('*').order('created_at', { ascending: false }),
-    client.from('special_periods').select('*').order('start_at', { ascending: false }),
-    client.from('admin_logs').select('*').order('created_at', { ascending: false }).limit(30)
-  ]);
-  document.querySelector('#usage-policy').textContent = JSON.stringify(policyRes.data || [], null, 2);
-  document.querySelector('#special-periods').textContent = JSON.stringify(periodsRes.data || [], null, 2);
-  document.querySelector('#admin-logs').textContent = JSON.stringify(logsRes.data || [], null, 2);
-}
-
-initAdmin().catch(error => console.error(error));
+const client=window.supabaseClient;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function callUserManagement(payload){const {data,error}=await client.functions.invoke('user-management',{body:payload});if(error)throw error;if(data?.error)throw new Error(data.error);return data}
+async function loadSettings(){const {data,error}=await client.from('app_settings').select('*').eq('id',true).single();if(error)throw error;document.querySelector('#default-model').value=data.default_model;document.querySelector('#daily-request-limit').value=data.daily_request_limit;document.querySelector('#daily-search-limit').value=data.daily_search_limit;document.querySelector('#max-output-tokens').value=data.max_output_tokens}
+async function loadUsers(){const {data,error}=await client.from('profiles').select('id,username,display_name,role,status,created_at').order('created_at',{ascending:false});if(error)throw error;document.querySelector('#user-list').innerHTML=data.map(u=>`<div class="admin-user"><b>${esc(u.display_name||u.username||'管理者')}</b><span>${esc(u.username||'OAuth')}</span><span>${esc(u.role)}</span><span>${esc(u.status)}</span>${u.role==='admin'?'':`<button data-status="active" data-id="${u.id}">再開</button><button data-status="suspended" data-id="${u.id}">一時停止</button><button data-status="disabled" data-id="${u.id}">利用停止</button><button data-delete="${u.id}">削除</button>`}</div>`).join('');document.querySelectorAll('[data-status]').forEach(b=>b.onclick=async()=>{try{await callUserManagement({action:'set_status',user_id:b.dataset.id,status:b.dataset.status});await loadUsers()}catch(e){alert(e.message)}});document.querySelectorAll('[data-delete]').forEach(b=>b.onclick=async()=>{if(!confirm('このアカウントを削除しますか？'))return;try{await callUserManagement({action:'delete',user_id:b.dataset.delete});await loadUsers()}catch(e){alert(e.message)}})}
+async function initAdmin(){const user=await window.kotohaAuth.requireUser();if(!user)return;const {data:profile}=await client.from('profiles').select('role').eq('id',user.id).single();const guard=document.querySelector('#admin-guard');if(!profile||profile.role!=='admin'){guard.textContent='このページにアクセスする権限がありません。';return}guard.hidden=true;document.querySelector('#admin-content').hidden=false;document.querySelector('#signout-button').onclick=window.kotohaAuth.signOut;
+await Promise.all([loadSettings(),loadUsers()]);
+document.querySelector('#settings-form').onsubmit=async e=>{e.preventDefault();const status=document.querySelector('#settings-status');status.textContent='保存中…';const {error}=await client.from('app_settings').update({default_model:document.querySelector('#default-model').value,daily_request_limit:Number(document.querySelector('#daily-request-limit').value),daily_search_limit:Number(document.querySelector('#daily-search-limit').value),max_output_tokens:Number(document.querySelector('#max-output-tokens').value),updated_at:new Date().toISOString(),updated_by:user.id}).eq('id',true);status.textContent=error?error.message:'保存しました。'};
+document.querySelector('#create-user-form').onsubmit=async e=>{e.preventDefault();const s=document.querySelector('#user-status');s.textContent='作成中…';try{await callUserManagement({action:'create',username:document.querySelector('#new-username').value.trim(),display_name:document.querySelector('#new-display-name').value.trim(),password:document.querySelector('#new-password').value});e.target.reset();s.textContent='アカウントを作成しました。';await loadUsers()}catch(err){s.textContent=err.message}};
+const [periods,logs]=await Promise.all([client.from('special_periods').select('*').order('start_at',{ascending:false}),client.from('admin_logs').select('*').order('created_at',{ascending:false}).limit(30)]);document.querySelector('#special-periods').textContent=JSON.stringify(periods.data||[],null,2);document.querySelector('#admin-logs').textContent=JSON.stringify(logs.data||[],null,2)}
+initAdmin().catch(e=>console.error(e));

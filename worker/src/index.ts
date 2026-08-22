@@ -93,6 +93,8 @@ export default {
         return json({ ok: false, error: 'このアカウントは現在利用できません。' }, 403);
       }
 
+      const isAdmin = profile.role === 'admin';
+
       if (payload.action === 'auth_test') {
         return json({ ok: true, user: { id: profile.id, role: profile.role } });
       }
@@ -109,12 +111,14 @@ export default {
       }
 
       const limits = await resolveLimits(admin);
-      const { data: consumed, error: consumeError } = await admin.rpc('consume_daily_request', {
-        p_user_id: userData.user.id,
-        p_limit: limits.daily_request_limit
-      });
-      if (consumeError) throw consumeError;
-      if (!consumed) return json({ ok: false, error: '今日の利用上限に達しました。' }, 429);
+      if (!isAdmin) {
+        const { data: consumed, error: consumeError } = await admin.rpc('consume_daily_request', {
+          p_user_id: userData.user.id,
+          p_limit: limits.daily_request_limit
+        });
+        if (consumeError) throw consumeError;
+        if (!consumed) return json({ ok: false, error: '今日の利用上限に達しました。' }, 429);
+      }
 
       const { data: history, error: historyError } = await admin
         .from('messages').select('role,content').eq('conversation_id', conversationId)

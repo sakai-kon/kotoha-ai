@@ -23,10 +23,13 @@ function textFromAi(result: unknown): string {
     if (typeof value.text === 'string') return value.text;
     const choices = value.choices;
     if (Array.isArray(choices) && choices[0] && typeof choices[0] === 'object') {
-      const message = (choices[0] as Record<string, unknown>).message;
-      if (message && typeof message === 'object' && typeof (message as Record<string, unknown>).content === 'string') {
-        return (message as Record<string, string>).content;
+      const choice = choices[0] as Record<string, unknown>;
+      const message = choice.message;
+      if (message && typeof message === 'object') {
+        const content = (message as Record<string, unknown>).content;
+        if (typeof content === 'string') return content;
       }
+      if (typeof choice.text === 'string') return choice.text;
     }
   }
   return 'AIから有効な回答を取得できませんでした。';
@@ -58,7 +61,7 @@ async function resolveLimits(admin: ReturnType<typeof createClient>) {
 
   const { data: settings, error: settingsError } = await admin
     .from('app_settings')
-    .select('daily_request_limit,daily_search_limit,max_output_tokens')
+    .select('daily_request_limit,daily_search_limit,max_output_tokens,default_model')
     .eq('id', true)
     .single();
   if (settingsError) throw settingsError;
@@ -68,7 +71,14 @@ async function resolveLimits(admin: ReturnType<typeof createClient>) {
 export default {
   async fetch(request, env): Promise<Response> {
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'Authorization, Content-Type' } });
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': 'POST, OPTIONS',
+          'access-control-allow-headers': 'Authorization, Content-Type'
+        }
+      });
     }
     if (request.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
 
@@ -87,8 +97,13 @@ export default {
 
     try {
       const payload = await request.json() as ChatRequest;
+
       const { data: profile, error: profileError } = await admin
-        .from('profiles').select('id,role,status').eq('id', userData.user.id).single();
+        .from('profiles')
+        .select('id,role,status,model_override,daily_request_limit_override,daily_search_limit_override,max_output_tokens_override')
+        .eq('id', userData.user.id)
+        .single();
+
       if (profileError || !profile || profile.status !== 'active') {
         return json({ ok: false, error: 'このアカウントは現在利用できません。' }, 403);
       }
@@ -105,37 +120,63 @@ export default {
       if (message.length > 8000) return json({ ok: false, error: 'メッセージが長すぎます。' }, 400);
 
       const { data: conversation, error: conversationError } = await admin
-        .from('conversations').select('id,user_id,title').eq('id', conversationId).single();
+        .from('conversations')
+        .select('id,user_id,title')
+        .eq('id', conversationId)
+        .single();
       if (conversationError || !conversation || conversation.user_id !== userData.user.id) {
         return json({ ok: false, error: 'この会話にはアクセスできません。' }, 403);
       }
 
       const limits = await resolveLimits(admin);
+
+      const effectiveRequestLimit =
+        profile.daily_request_limit_override ?? limits.daily_request_limit;
+      const effectiveSearchLimit =
+        profile.daily_search_limit_override ?? limits.daily_search_limit;
+      const effectiveMaxOutputTokens =
+        profile.max_output_tokens_override ?? limits.max_output_tokens;
+
       if (!isAdmin) {
+        if (!Number.isFinite(Number(effectiveRequestLimit)) || Number(effectiveRequestLimit) < 1) {
+          return json({ ok: false, error: '現在AIの利用は停止されています。' }, 429);
+        }
+
         const { data: consumed, error: consumeError } = await admin.rpc('consume_daily_request', {
           p_user_id: userData.user.id,
-          p_limit: limits.daily_request_limit
+          p_limit: Number(effectiveRequestLimit)
         });
         if (consumeError) throw consumeError;
         if (!consumed) return json({ ok: false, error: '今日の利用上限に達しました。' }, 429);
       }
 
       const { data: history, error: historyError } = await admin
-        .from('messages').select('role,content').eq('conversation_id', conversationId)
-        .order('created_at', { ascending: false }).limit(20);
+        .from('messages')
+        .select('role,content')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: false })
+        .limit(20);
       if (historyError) throw historyError;
 
       const { data: settings, error: settingsError } = await admin
-        .from('app_settings').select('default_model').eq('id', true).single();
+        .from('app_settings')
+        .select('default_model,max_output_tokens')
+        .eq('id', true)
+        .single();
       if (settingsError) throw settingsError;
 
+      const effectiveModel = profile.model_override || settings.default_model;
       const messages = [...(history ?? []).reverse(), { role: 'user', content: message }]
-        .map(item => ({ role: item.role === 'assistant' ? 'assistant' : 'user', content: item.content }));
+        .map(item => ({
+          role: item.role === 'assistant' ? 'assistant' : 'user',
+          content: item.content
+        }));
 
-      const result = await env.AI.run(settings.default_model, {
-        messages,
-        max_tokens: limits.max_output_tokens
-      });
+      const aiOptions: Record<string, unknown> = { messages };
+      const maxTokens = Number(effectiveMaxOutputTokens);
+      if (Number.isFinite(maxTokens) && maxTokens > 0) aiOptions.max_tokens = maxTokens;
+
+      const result = await env.AI.run(effectiveModel, aiOptions);
       const answer = textFromAi(result);
 
       const { error: insertError } = await admin.from('messages').insert([
@@ -144,16 +185,33 @@ export default {
       ]);
       if (insertError) throw insertError;
 
+      const updatedAt = new Date().toISOString();
+      const updateData: Record<string, string> = { updated_at: updatedAt };
       if (conversation.title === '新しいチャット') {
-        const title = message.replace(/\s+/g, ' ').slice(0, 40);
-        await admin.from('conversations').update({ title, updated_at: new Date().toISOString() }).eq('id', conversationId);
-      } else {
-        await admin.from('conversations').update({ updated_at: new Date().toISOString() }).eq('id', conversationId);
+        updateData.title = message.replace(/\s+/g, ' ').slice(0, 40);
       }
 
-      return json({ ok: true, conversation_id: conversationId, answer });
+      const { error: conversationUpdateError } = await admin
+        .from('conversations')
+        .update(updateData)
+        .eq('id', conversationId);
+      if (conversationUpdateError) throw conversationUpdateError;
+
+      return json({
+        ok: true,
+        conversation_id: conversationId,
+        answer,
+        model: effectiveModel,
+        request_limit: isAdmin ? null : Number(effectiveRequestLimit),
+        search_limit: isAdmin ? null : Number(effectiveSearchLimit),
+        max_output_tokens: maxTokens,
+        admin: isAdmin
+      });
     } catch (error) {
-      console.error(JSON.stringify({ event: 'kotoha_api_error', message: error instanceof Error ? error.message : String(error) }));
+      console.error(JSON.stringify({
+        event: 'kotoha_api_error',
+        message: error instanceof Error ? error.message : String(error)
+      }));
       return json({ ok: false, error: 'サーバー処理中にエラーが発生しました。' }, 500);
     }
   }

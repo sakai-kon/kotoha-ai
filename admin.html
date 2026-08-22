@@ -1,8 +1,102 @@
-<!doctype html><html lang="ja"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>管理 | Kotoha AI</title><link rel="stylesheet" href="css/style.css"></head><body>
-<main class="dashboard-shell"><header class="dashboard-header"><a class="logo" href="chat.html">Kotoha AI</a><h1>管理ダッシュボード</h1><button id="signout-button" class="button secondary" type="button">ログアウト</button></header>
-<div id="admin-guard" class="status">権限を確認しています…</div>
-<section id="admin-content" hidden class="dashboard-grid">
-<article class="panel"><h2>AIモデル</h2><form id="settings-form" class="stack"><label>通常ユーザーのモデル<select id="default-model"><option value="@cf/zai-org/glm-4.7-flash">GLM-4.7 Flash</option><option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B</option></select></label><label>1日の質問上限<input id="daily-request-limit" type="number" min="0"></label><label>1日の検索上限<input id="daily-search-limit" type="number" min="0"></label><label>最大出力トークン<input id="max-output-tokens" type="number" min="64" max="8192"></label><button class="button primary" type="submit">全体設定を保存</button></form><p id="settings-status" class="status"></p></article>
-<article class="panel"><h2>ユーザー管理</h2><form id="create-user-form" class="stack"><label>Kotoha AI ID<input id="new-username" required pattern="[A-Za-z0-9_.-]{3,32}"></label><label>表示名<input id="new-display-name"></label><label>初期パスワード<input id="new-password" type="password" minlength="8" required></label><button class="button primary" type="submit">アカウント作成</button></form><p id="user-status" class="status"></p><div id="user-list"></div></article>
-<article class="panel"><h2>特別期間</h2><div id="special-periods"></div></article><article class="panel"><h2>管理ログ</h2><div id="admin-logs"></div></article>
-</section></main><script src="js/config.js?v=3"></script><script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script><script src="js/supabase.js?v=3"></script><script src="js/auth.js?v=4"></script><script src="js/admin.js?v=2"></script></body></html>
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>管理 | Kotoha AI</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<main class="dashboard-shell">
+  <header class="dashboard-header">
+    <a class="logo" href="chat.html">Kotoha AI</a>
+    <h1>管理ダッシュボード</h1>
+    <button id="signout-button" class="button secondary" type="button">ログアウト</button>
+  </header>
+
+  <div id="admin-guard" class="status">権限を確認しています…</div>
+
+  <section id="admin-content" hidden class="dashboard-grid">
+    <article class="panel">
+      <h2>自分のAI設定（管理者）</h2>
+      <form id="admin-settings-form" class="stack">
+        <label>自分が使うモデル
+          <select id="admin-model">
+            <option value="">全体設定を使用</option>
+            <option value="@cf/zai-org/glm-4.7-flash">GLM-4.7 Flash</option>
+            <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B</option>
+          </select>
+        </label>
+        <label>自分の最大出力トークン
+          <input id="admin-max-output-tokens" type="number" min="64" max="8192" placeholder="全体設定を使用">
+        </label>
+        <p class="status">管理者の質問回数上限はありません。</p>
+        <button class="button primary" type="submit">自分の設定を保存</button>
+      </form>
+      <p id="admin-settings-status" class="status"></p>
+    </article>
+
+    <article class="panel">
+      <h2>全体設定</h2>
+      <form id="settings-form" class="stack">
+        <label>通常ユーザーの既定モデル
+          <select id="default-model">
+            <option value="@cf/zai-org/glm-4.7-flash">GLM-4.7 Flash</option>
+            <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B</option>
+          </select>
+        </label>
+        <label>1日の質問上限
+          <input id="daily-request-limit" type="number" min="0">
+        </label>
+        <label>1日の検索上限
+          <input id="daily-search-limit" type="number" min="0">
+        </label>
+        <label>最大出力トークン
+          <input id="max-output-tokens" type="number" min="64" max="8192">
+        </label>
+        <button class="button primary" type="submit">全体設定を保存</button>
+      </form>
+      <p id="settings-status" class="status"></p>
+    </article>
+
+    <article class="panel">
+      <h2>アカウント作成</h2>
+      <form id="create-user-form" class="stack">
+        <label>Kotoha AI ID
+          <input id="new-username" required pattern="[A-Za-z0-9_.-]{3,32}">
+        </label>
+        <label>表示名
+          <input id="new-display-name">
+        </label>
+        <label>初期パスワード
+          <input id="new-password" type="password" minlength="8" required>
+        </label>
+        <button class="button primary" type="submit">アカウント作成</button>
+      </form>
+      <p id="user-status" class="status"></p>
+    </article>
+
+    <article class="panel">
+      <h2>アカウントごとのモデル・利用制限</h2>
+      <p class="status">空欄または「全体設定を使用」にすると全体設定を継承します。</p>
+      <div id="user-list"></div>
+    </article>
+
+    <article class="panel">
+      <h2>特別期間</h2>
+      <div id="special-periods"></div>
+    </article>
+
+    <article class="panel">
+      <h2>管理ログ</h2>
+      <div id="admin-logs"></div>
+    </article>
+  </section>
+</main>
+<script src="js/config.js?v=3"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabase.js?v=3"></script>
+<script src="js/auth.js?v=4"></script>
+<script src="js/admin.js?v=3"></script>
+</body>
+</html>

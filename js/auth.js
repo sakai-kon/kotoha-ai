@@ -11,6 +11,12 @@ function setAuthBusy(busy) {
   });
 }
 
+function getAppUrl() {
+  const configured = window.KOTOHA_CONFIG?.APP_URL;
+  if (!configured) return window.location.origin + window.location.pathname.replace(/[^/]*$/, '');
+  return configured.endsWith('/') ? configured : `${configured}/`;
+}
+
 async function getCurrentUser() {
   const { data, error } = await client.auth.getUser();
   if (error) return null;
@@ -20,7 +26,7 @@ async function getCurrentUser() {
 async function requireUser() {
   const user = await getCurrentUser();
   if (!user) {
-    location.replace('login.html');
+    location.replace(new URL('login.html', getAppUrl()).href);
     return null;
   }
   return user;
@@ -29,20 +35,22 @@ async function requireUser() {
 async function signOut() {
   const { error } = await client.auth.signOut();
   if (error) console.error('Sign out failed:', error);
-  location.replace('index.html');
+  location.replace(getAppUrl());
 }
 
 async function redirectIfAuthenticated() {
   if (!document.querySelector('#auth-form')) return;
   const user = await getCurrentUser();
-  if (user) location.replace('chat.html');
+  if (user) location.replace(new URL('chat.html', getAppUrl()).href);
 }
 
 async function signInWithGithub() {
   setAuthBusy(true);
   setStatus('GitHubに移動しています…');
 
-  const redirectTo = new URL('chat.html', window.location.href).href;
+  // Always use the configured GitHub Pages URL. This avoids accidental
+  // localhost redirects when OAuth settings or previews use another origin.
+  const redirectTo = new URL('chat.html', getAppUrl()).href;
   const { error } = await client.auth.signInWithOAuth({
     provider: 'github',
     options: { redirectTo }
@@ -70,8 +78,6 @@ if (authForm) {
     setAuthBusy(true);
     setStatus('ログインしています…');
 
-    // Supabase Auth requires an email internally. General-user IDs are
-    // provisioned by the administrator as username@kotoha.local.
     const email = `${username.toLowerCase()}@kotoha.local`;
     const { error } = await client.auth.signInWithPassword({ email, password });
 
@@ -82,7 +88,7 @@ if (authForm) {
       return;
     }
 
-    location.replace('chat.html');
+    location.replace(new URL('chat.html', getAppUrl()).href);
   });
 }
 

@@ -57,7 +57,6 @@
     if (text) {
       try { data = JSON.parse(text); } catch { data = text; }
     }
-
     if (!response.ok) {
       const message = data?.message || data?.details || (typeof data === 'string' ? data : `HTTP ${response.status}`);
       throw new Error(`Supabase API ${response.status}: ${message}`);
@@ -137,16 +136,32 @@
     const article = document.createElement('article');
     article.className = `message ${role}`;
     if (thinking) article.dataset.thinking = 'true';
-    article.innerHTML = `<strong>${role === 'user' ? 'あなた' : 'Kotoha'}</strong><p>${escapeHtml(content)}</p>`;
+    article.innerHTML = `<strong>${role === 'user' ? 'あなた' : 'Kotoha'}</strong><p></p>`;
+    article.querySelector('p').textContent = content;
     list.appendChild(article);
     list.scrollTop = list.scrollHeight;
+    return article;
   }
 
   function removeThinkingMessage() {
     document.querySelectorAll('[data-thinking="true"]').forEach(el => el.remove());
   }
 
-  async function sendChatMessage(content) {
+  function extractStreamText(payload) {
+    if (!payload || typeof payload !== 'object') return '';
+    if (typeof payload.response === 'string') return payload.response;
+    if (typeof payload.text === 'string') return payload.text;
+    const choices = payload.choices;
+    if (Array.isArray(choices) && choices[0] && typeof choices[0] === 'object') {
+      const choice = choices[0];
+      if (choice.delta && typeof choice.delta === 'object' && typeof choice.delta.content === 'string') return choice.delta.content;
+      if (choice.message && typeof choice.message === 'object' && typeof choice.message.content === 'string') return choice.message.content;
+      if (typeof choice.text === 'string') return choice.text;
+    }
+    return '';
+  }
+
+  async function sendChatMessage(content, onChunk) {
     if (!currentConversationId) await createConversation();
     const token = await getAccessToken();
     const response = await withTimeout(fetch(API_URL, {
@@ -154,9 +169,51 @@
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ conversation_id: currentConversationId, message: content })
     }), 90000, 'AIの応答が90秒以内に完了しませんでした。');
-    const result = await response.json().catch(() => ({ ok: false, error: 'WorkerからJSON応答を取得できませんでした。' }));
-    if (!response.ok || !result.ok) throw new Error(result.error || `Worker error: ${response.status}`);
-    return result;
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => null);
+      throw new Error(errorData?.error || `Worker error: ${response.status}`);
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/event-stream') || !response.body) {
+      const result = await response.json().catch(() => ({ ok: false, error: 'WorkerからJSON応答を取得できませんでした。' }));
+      if (!result.ok) throw new Error(result.error || 'AI応答に失敗しました。');
+      onChunk(result.answer || '');
+      return result.answer || '';
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let answer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(payload);
+          const part = extractStreamText(parsed);
+          if (part) {
+            answer += part;
+            onChunk(answer);
+          }
+        } catch {
+          // SSEのコメントや非JSON行は無視する。
+        }
+      }
+    }
+
+    return answer.trim();
   }
 
   async function initChat() {
@@ -169,7 +226,8 @@
       currentUser = await withTimeout(window.kotohaAuth.requireUser(), 10000, 'ログイン状態の確認がタイムアウトしました。');
       if (!currentUser) return;
 
-      document.querySelector('#signout-button').addEventListener('click', window.kotohaAuth.signOut);
+      const signout = document.querySelector('#signout-button');
+      if (signout) signout.addEventListener('click', window.kotohaAuth.signOut);
       document.querySelector('#new-chat').addEventListener('click', async () => {
         try { await createConversation(); setStatus('🟢 新しいチャットを作成しました。'); }
         catch (error) { setStatus(`🔴 ${error.message}`); }
@@ -177,11 +235,8 @@
 
       setStatus('Cloudflare Workerへ接続しています…');
       const workerResult = await verifyWorkerConnection();
-      if (!workerResult.ok) {
-        setStatus(`🔴 サーバー接続確認: ${workerResult.error}`);
-      } else {
-        setStatus(`🟢 サーバー接続確認: 成功（${workerResult.user?.role || 'user'}）`);
-      }
+      if (!workerResult.ok) setStatus(`🔴 サーバー接続確認: ${workerResult.error}`);
+      else setStatus(`🟢 サーバー接続確認: 成功（${workerResult.user?.role || 'user'}）`);
 
       try {
         await loadConversations();
@@ -200,15 +255,22 @@
         const content = input.value.trim();
         if (!content || button.disabled) return;
 
+        let thinkingMessage = null;
         try {
           setBusy(button, true);
           input.value = '';
           if (!currentConversationId) await createConversation();
           renderMessage('user', content);
-          renderMessage('assistant', '考えています…', true);
-          setStatus('Kotohaが考えています…');
-          await sendChatMessage(content);
+          thinkingMessage = renderMessage('assistant', '考えています…', true);
+          const answer = await sendChatMessage(content, (partial) => {
+            if (!thinkingMessage) return;
+            thinkingMessage.querySelector('p').textContent = partial || '考えています…';
+            const list = document.querySelector('#message-list');
+            list.scrollTop = list.scrollHeight;
+          });
+
           removeThinkingMessage();
+          if (answer) renderMessage('assistant', answer);
           await openConversation(currentConversationId);
           await loadConversations();
           await loadUsage();

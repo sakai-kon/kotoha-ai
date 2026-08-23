@@ -19,6 +19,108 @@
     }[c]));
   }
 
+  function inlineMarkdown(value) {
+    let text = escapeHtml(value);
+    text = text.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+    text = text.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    text = text.replace(/__([^_\n]+)__/g, '<strong>$1</strong>');
+    text = text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>');
+    text = text.replace(/(^|[^_])_([^_\n]+)_(?!_)/g, '$1<em>$2</em>');
+    text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    return text;
+  }
+
+  function markdownToHtml(markdown) {
+    const source = String(markdown ?? '').replace(/\r\n?/g, '\n');
+    const lines = source.split('\n');
+    const out = [];
+    let inCode = false;
+    let codeBuffer = [];
+    let codeLanguage = '';
+    let listType = null;
+
+    const closeList = () => {
+      if (listType) {
+        out.push(`</${listType}>`);
+        listType = null;
+      }
+    };
+
+    for (const line of lines) {
+      if (/^\s*```/.test(line)) {
+        if (!inCode) {
+          closeList();
+          inCode = true;
+          codeLanguage = line.replace(/^\s*```/, '').trim();
+          codeBuffer = [];
+        } else {
+          const languageClass = codeLanguage ? ` class="language-${escapeHtml(codeLanguage)}"` : '';
+          out.push(`<pre><code${languageClass}>${escapeHtml(codeBuffer.join('\n'))}</code></pre>`);
+          inCode = false;
+          codeLanguage = '';
+          codeBuffer = [];
+        }
+        continue;
+      }
+
+      if (inCode) {
+        codeBuffer.push(line);
+        continue;
+      }
+
+      if (/^\s*$/.test(line)) {
+        closeList();
+        continue;
+      }
+
+      const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*$/);
+      if (heading) {
+        closeList();
+        const level = heading[1].length;
+        out.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
+        continue;
+      }
+
+      const unordered = line.match(/^\s*[-*+]\s+(.+)$/);
+      if (unordered) {
+        if (listType !== 'ul') {
+          closeList();
+          out.push('<ul>');
+          listType = 'ul';
+        }
+        out.push(`<li>${inlineMarkdown(unordered[1])}</li>`);
+        continue;
+      }
+
+      const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+      if (ordered) {
+        if (listType !== 'ol') {
+          closeList();
+          out.push('<ol>');
+          listType = 'ol';
+        }
+        out.push(`<li>${inlineMarkdown(ordered[1])}</li>`);
+        continue;
+      }
+
+      const quote = line.match(/^\s*>\s?(.*)$/);
+      if (quote) {
+        closeList();
+        out.push(`<blockquote>${inlineMarkdown(quote[1])}</blockquote>`);
+        continue;
+      }
+
+      closeList();
+      out.push(`<p>${inlineMarkdown(line)}</p>`);
+    }
+
+    if (inCode) {
+      out.push(`<pre><code>${escapeHtml(codeBuffer.join('\n'))}</code></pre>`);
+    }
+    closeList();
+    return out.join('');
+  }
+
   function setStatus(message) {
     const note = document.querySelector('#worker-status');
     if (note) note.textContent = message;
@@ -115,10 +217,12 @@
     currentConversationId = conversation.id;
     document.querySelector('#conversation-title').textContent = conversation.title || 'チャット';
     const messages = await dbFetch('messages?select=role,content,created_at&conversation_id=eq.' + encodeURIComponent(id) + '&order=created_at.asc');
-    document.querySelector('#message-list').innerHTML = (messages || []).map(m =>
-      `<article class="message ${escapeHtml(m.role)}"><strong>${m.role === 'user' ? 'あなた' : m.role === 'assistant' ? 'Kotoha' : escapeHtml(m.role)}</strong><p>${escapeHtml(m.content)}</p></article>`
-    ).join('');
-    document.querySelector('#message-list').scrollTop = document.querySelector('#message-list').scrollHeight;
+    document.querySelector('#message-list').innerHTML = '';
+    for (const m of messages || []) {
+      renderMessage(m.role, m.content, false);
+    }
+    const list = document.querySelector('#message-list');
+    list.scrollTop = list.scrollHeight;
   }
 
   async function loadUsage() {
@@ -147,7 +251,8 @@
         }
       }
     } catch (error) {
-      document.querySelector('#usage-summary').textContent = '利用状況を取得できません';
+      const usage = document.querySelector('#usage-summary');
+      if (usage) usage.textContent = '利用状況を取得できません';
       console.error('Usage load failed:', error);
     }
   }
@@ -157,8 +262,11 @@
     const article = document.createElement('article');
     article.className = `message ${role}`;
     if (streaming) article.dataset.streaming = 'true';
-    article.innerHTML = `<strong>${role === 'user' ? 'あなた' : 'Kotoha'}</strong><p></p>`;
-    article.querySelector('p').textContent = content;
+    article.innerHTML = `<strong>${role === 'user' ? 'あなた' : 'Kotoha'}</strong><div class="message-content"></div>`;
+    const contentNode = article.querySelector('.message-content');
+    contentNode.innerHTML = role === 'assistant'
+      ? markdownToHtml(content)
+      : escapeHtml(content).replace(/\n/g, '<br>');
     list.appendChild(article);
     list.scrollTop = list.scrollHeight;
     return article;
@@ -258,11 +366,11 @@
           assistantMessage = renderMessage('assistant', '生成中…', true);
           const answer = await sendChatMessage(content, model, partial => {
             if (!assistantMessage) return;
-            assistantMessage.querySelector('p').textContent = partial || '生成中…';
+            assistantMessage.querySelector('.message-content').innerHTML = markdownToHtml(partial || '生成中…');
             const list = document.querySelector('#message-list');
             list.scrollTop = list.scrollHeight;
           });
-          assistantMessage.querySelector('p').textContent = answer || 'AIから有効な回答を取得できませんでした。';
+          assistantMessage.querySelector('.message-content').innerHTML = markdownToHtml(answer || 'AIから有効な回答を取得できませんでした。');
           assistantMessage.removeAttribute('data-streaming');
           await openConversation(currentConversationId);
           await loadConversations();

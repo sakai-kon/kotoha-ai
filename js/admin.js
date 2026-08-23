@@ -1,18 +1,43 @@
 (() => {
   const client = window.supabaseClient;
 
-  const MODEL_OPTIONS = [
+  // Workers AIの現行Text Generationモデル一覧（非推奨モデルは除外）。
+  // 一部モデルはWorkers Paid等のプランが必要な場合があります。
+  const ALL_TEXT_MODELS = [
+    ['@cf/deepseek-ai/deepseek-r1-distill-qwen-32b', 'DeepSeek R1 Distill Qwen 32B'],
+    ['@cf/deepseek-ai/deepseek-v4-flash-0731', 'DeepSeek V4 Flash 0731'],
+    ['@cf/google/gemma-4-26b-a4b-it', 'Gemma 4 26B A4B'],
+    ['@cf/aisingapore/gemma-sea-lion-v4-27b-it', 'SEA-LION V4 27B'],
+    ['@cf/zai-org/glm-4.7-flash', 'GLM-4.7 Flash · 高速'],
+    ['@cf/zai-org/glm-5.2', 'GLM-5.2 · Paid'],
+    ['@cf/openai/gpt-oss-20b', 'GPT-OSS 20B · 低遅延寄り'],
+    ['@cf/openai/gpt-oss-120b', 'GPT-OSS 120B'],
+    ['@cf/ibm/granite-4.0-h-micro', 'Granite 4.0 H Micro'],
+    ['@cf/moonshotai/kimi-k2.6', 'Kimi K2.6 · Paid'],
+    ['@cf/moonshotai/kimi-k2.7-code', 'Kimi K2.7 Code · Paid'],
+    ['@cf/meta/llama-3.1-8b-instruct-fast', 'Llama 3.1 8B Instruct · 高速'],
+    ['@cf/meta/llama-3.1-8b-instruct-fp8', 'Llama 3.1 8B Instruct FP8'],
+    ['@cf/meta/llama-3.2-11b-vision-instruct', 'Llama 3.2 11B Vision'],
+    ['@cf/meta/llama-3.2-1b-instruct', 'Llama 3.2 1B Instruct'],
+    ['@cf/meta/llama-3.2-3b-instruct', 'Llama 3.2 3B Instruct'],
+    ['@cf/meta/llama-3.3-70b-instruct-fp8-fast', 'Llama 3.3 70B · 高速'],
+    ['@cf/meta/llama-4-scout-17b-16e-instruct', 'Llama 4 Scout 17B'],
+    ['@cf/mistralai/mistral-small-3.1-24b-instruct', 'Mistral Small 3.1 24B'],
+    ['@cf/nvidia/nemotron-3-120b-a12b', 'Nemotron 3 120B A12B'],
+    ['@cf/qwen/qwen2.5-coder-32b-instruct', 'Qwen 2.5 Coder 32B'],
+    ['@cf/qwen/qwen3-30b-a3b-fp8', 'Qwen 3 30B A3B FP8'],
+    ['@cf/qwen/qwq-32b', 'QwQ 32B']
+  ].map(([value, label]) => ({ value, label }));
+
+  // 通常ユーザーはこの2モデルだけ。管理者が個別設定を付けてもWorker側で再検証する。
+  const NORMAL_MODEL_OPTIONS = [
     { value: '', label: '全体設定を使用' },
-    { value: '@cf/zai-org/glm-4.7-flash', label: 'GLM-4.7 Flash' },
-    { value: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', label: 'Llama 3.3 70B' }
+    { value: '@cf/google/gemma-4-26b-a4b-it', label: 'Gemma 4 26B · 標準' },
+    { value: '@cf/zai-org/glm-4.7-flash', label: 'GLM-4.7 Flash · 高速' }
   ];
 
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
 
   const numberOrNull = (value, min = 0, max = null) => {
@@ -36,15 +61,20 @@
     return data;
   }
 
-  async function loadSettings() {
-    const { data, error } = await client
-      .from('app_settings')
-      .select('*')
-      .eq('id', true)
-      .single();
-    if (error) throw error;
+  function renderOptions(options, selected = '') {
+    return options.map((option) =>
+      `<option value="${esc(option.value)}"${option.value === selected ? ' selected' : ''}>${esc(option.label)}</option>`
+    ).join('');
+  }
 
-    document.querySelector('#default-model').value = data.default_model || '';
+  function adminModelOptions(selected = '') {
+    return renderOptions([{ value: '', label: '全体設定を使用' }, ...ALL_TEXT_MODELS], selected);
+  }
+
+  async function loadSettings() {
+    const { data, error } = await client.from('app_settings').select('*').eq('id', true).single();
+    if (error) throw error;
+    document.querySelector('#default-model').value = data.default_model || '@cf/zai-org/glm-4.7-flash';
     document.querySelector('#daily-request-limit').value = data.daily_request_limit ?? '';
     document.querySelector('#daily-search-limit').value = data.daily_search_limit ?? '';
     document.querySelector('#max-output-tokens').value = data.max_output_tokens ?? '';
@@ -52,21 +82,18 @@
   }
 
   async function loadAdminOwnSettings(userId) {
-    const { data, error } = await client
-      .from('profiles')
-      .select('model_override,max_output_tokens_override')
-      .eq('id', userId)
-      .single();
+    const { data, error } = await client.from('profiles').select('model_override,max_output_tokens_override').eq('id', userId).single();
     if (error) throw error;
-
-    document.querySelector('#admin-model').value = data.model_override || '';
+    const model = document.querySelector('#admin-model');
+    model.innerHTML = adminModelOptions(data.model_override || '');
     document.querySelector('#admin-max-output-tokens').value = data.max_output_tokens_override ?? '';
   }
 
-  function modelOptions(selected = '') {
-    return MODEL_OPTIONS.map((option) =>
-      `<option value="${esc(option.value)}"${option.value === selected ? ' selected' : ''}>${esc(option.label)}</option>`
-    ).join('');
+  function modelOptionsForUser(user, selected) {
+    const options = user.role === 'admin'
+      ? [{ value: '', label: '全体設定を使用' }, ...ALL_TEXT_MODELS]
+      : NORMAL_MODEL_OPTIONS;
+    return renderOptions(options, selected);
   }
 
   function userEditor(user, conversationCount) {
@@ -74,33 +101,17 @@
     return `
       <div class="admin-user" data-user-card="${esc(user.id)}">
         <div class="admin-user-head">
-          <div>
-            <b>${esc(user.display_name || user.username || '管理者')}</b>
-            <span>${esc(user.username || 'OAuth')}</span>
-          </div>
+          <div><b>${esc(user.display_name || user.username || '管理者')}</b><span>${esc(user.username || 'OAuth')}</span></div>
           <span>${esc(user.role)} / ${esc(user.status)}</span>
         </div>
-
         <p class="status">会話数: ${conversationCount}${isAdmin ? ' / 無制限' : ''}</p>
-
         <div class="admin-user-settings">
-          <label>モデル
-            <select data-field="model">${modelOptions(user.model_override || '')}</select>
-          </label>
-          <label>質問上限/日
-            <input data-field="request-limit" type="number" min="0" step="1" value="${esc(user.daily_request_limit_override ?? '')}" placeholder="全体設定">
-          </label>
-          <label>検索上限/日
-            <input data-field="search-limit" type="number" min="0" step="1" value="${esc(user.daily_search_limit_override ?? '')}" placeholder="全体設定">
-          </label>
-          <label>最大出力トークン
-            <input data-field="max-output-tokens" type="number" min="64" max="8192" step="1" value="${esc(user.max_output_tokens_override ?? '')}" placeholder="全体設定">
-          </label>
-          <label>会話上限
-            <input data-field="max-conversations" type="number" min="1" step="1" value="${esc(user.max_conversations_override ?? '')}" placeholder="全体設定">
-          </label>
+          <label>モデル<select data-field="model">${modelOptionsForUser(user, user.model_override || '')}</select></label>
+          <label>質問上限/日<input data-field="request-limit" type="number" min="0" step="1" value="${esc(user.daily_request_limit_override ?? '')}" placeholder="全体設定"></label>
+          <label>検索上限/日<input data-field="search-limit" type="number" min="0" step="1" value="${esc(user.daily_search_limit_override ?? '')}" placeholder="全体設定"></label>
+          <label>最大出力トークン<input data-field="max-output-tokens" type="number" min="64" max="8192" step="1" value="${esc(user.max_output_tokens_override ?? '')}" placeholder="全体設定"></label>
+          <label>会話上限<input data-field="max-conversations" type="number" min="1" step="1" value="${esc(user.max_conversations_override ?? '')}" placeholder="全体設定"></label>
         </div>
-
         <div class="admin-user-actions">
           <button type="button" class="button primary" data-save-settings="${esc(user.id)}">個別設定を保存</button>
           <button type="button" class="button secondary" data-reset-settings="${esc(user.id)}">全体設定に戻す</button>
@@ -109,143 +120,111 @@
             <button type="button" class="button secondary" data-status="active" data-id="${esc(user.id)}">再開</button>
             <button type="button" class="button secondary" data-status="suspended" data-id="${esc(user.id)}">一時停止</button>
             <button type="button" class="button secondary" data-status="disabled" data-id="${esc(user.id)}">利用停止</button>
-            <button type="button" class="button secondary" data-delete="${esc(user.id)}">削除</button>
-          `}
+            <button type="button" class="button secondary" data-delete="${esc(user.id)}">削除</button>`}
         </div>
         <p class="status" data-user-status="${esc(user.id)}"></p>
-      </div>
-    `;
+      </div>`;
   }
 
   async function getConversationCount(userId) {
-    const { count, error } = await client
-      .from('conversations')
-      .select('id', { count: 'exact', head: true })
-      .eq('user_id', userId);
+    const { count, error } = await client.from('conversations').select('id', { count: 'exact', head: true }).eq('user_id', userId);
     if (error) throw error;
     return Number(count || 0);
   }
 
   async function loadUsers() {
-    const { data, error } = await client
-      .from('profiles')
-      .select('id,username,display_name,role,status,created_at,model_override,daily_request_limit_override,daily_search_limit_override,max_output_tokens_override,max_conversations_override')
-      .order('created_at', { ascending: false });
+    const { data, error } = await client.from('profiles').select('id,username,display_name,role,status,created_at,model_override,daily_request_limit_override,daily_search_limit_override,max_output_tokens_override,max_conversations_override').order('created_at', { ascending: false });
     if (error) throw error;
-
     const users = data || [];
     const counts = await Promise.all(users.map((user) => getConversationCount(user.id)));
     const list = document.querySelector('#user-list');
     list.innerHTML = users.map((user, index) => userEditor(user, counts[index])).join('');
 
-    list.querySelectorAll('[data-save-settings]').forEach((button) => {
-      button.addEventListener('click', async () => {
-        const id = button.dataset.saveSettings;
-        const card = list.querySelector(`[data-user-card="${CSS.escape(id)}"]`);
-        const status = list.querySelector(`[data-user-status="${CSS.escape(id)}"]`);
-        if (!card) return;
+    list.querySelectorAll('[data-save-settings]').forEach((button) => button.addEventListener('click', async () => {
+      const id = button.dataset.saveSettings;
+      const card = list.querySelector(`[data-user-card="${CSS.escape(id)}"]`);
+      const status = list.querySelector(`[data-user-status="${CSS.escape(id)}"]`);
+      if (!card) return;
 
-        const requestLimitRaw = card.querySelector('[data-field="request-limit"]').value;
-        const searchLimitRaw = card.querySelector('[data-field="search-limit"]').value;
-        const maxTokensRaw = card.querySelector('[data-field="max-output-tokens"]').value;
-        const maxConversationsRaw = card.querySelector('[data-field="max-conversations"]').value;
-        const requestLimit = numberOrNull(requestLimitRaw, 0);
-        const searchLimit = numberOrNull(searchLimitRaw, 0);
-        const maxTokens = maxTokensOrNull(maxTokensRaw);
-        const maxConversations = maxConversationsOrNull(maxConversationsRaw);
+      const requestRaw = card.querySelector('[data-field="request-limit"]').value;
+      const searchRaw = card.querySelector('[data-field="search-limit"]').value;
+      const maxTokensRaw = card.querySelector('[data-field="max-output-tokens"]').value;
+      const maxConversationsRaw = card.querySelector('[data-field="max-conversations"]').value;
+      const requestLimit = numberOrNull(requestRaw, 0);
+      const searchLimit = numberOrNull(searchRaw, 0);
+      const maxTokens = maxTokensOrNull(maxTokensRaw);
+      const maxConversations = maxConversationsOrNull(maxConversationsRaw);
 
-        if (String(requestLimitRaw).trim() && requestLimit === null) return void (status.textContent = '質問上限の値が不正です。');
-        if (String(searchLimitRaw).trim() && searchLimit === null) return void (status.textContent = '検索上限の値が不正です。');
-        if (String(maxTokensRaw).trim() && maxTokens === null) return void (status.textContent = '最大出力トークンは64〜8192で指定してください。');
-        if (String(maxConversationsRaw).trim() && maxConversations === null) return void (status.textContent = '会話上限は1以上で指定してください。');
+      if (requestRaw.trim() && requestLimit === null) return void (status.textContent = '質問上限の値が不正です。');
+      if (searchRaw.trim() && searchLimit === null) return void (status.textContent = '検索上限の値が不正です。');
+      if (maxTokensRaw.trim() && maxTokens === null) return void (status.textContent = '最大出力トークンは64〜8192で指定してください。');
+      if (maxConversationsRaw.trim() && maxConversations === null) return void (status.textContent = '会話上限は1以上で指定してください。');
 
-        status.textContent = '保存中…';
-        try {
-          await callUserManagement({
-            action: 'set_limits',
-            user_id: id,
-            model_override: card.querySelector('[data-field="model"]').value || null,
-            daily_request_limit_override: requestLimit,
-            daily_search_limit_override: searchLimit,
-            max_output_tokens_override: maxTokens,
-            max_conversations_override: maxConversations
-          });
-          await loadUsers();
-        } catch (error) {
-          status.textContent = `保存に失敗しました: ${error.message}`;
-        }
-      });
-    });
+      status.textContent = '保存中…';
+      try {
+        await callUserManagement({
+          action: 'set_limits',
+          user_id: id,
+          model_override: card.querySelector('[data-field="model"]').value || null,
+          daily_request_limit_override: requestLimit,
+          daily_search_limit_override: searchLimit,
+          max_output_tokens_override: maxTokens,
+          max_conversations_override: maxConversations
+        });
+        await loadUsers();
+      } catch (error) {
+        status.textContent = `保存に失敗しました: ${error.message}`;
+      }
+    }));
 
-    list.querySelectorAll('[data-reset-settings]').forEach((button) => {
-      button.addEventListener('click', async () => {
-        const id = button.dataset.resetSettings;
-        if (!confirm('このユーザーを全体設定に戻しますか？')) return;
-        try {
-          await callUserManagement({
-            action: 'set_limits',
-            user_id: id,
-            model_override: null,
-            daily_request_limit_override: null,
-            daily_search_limit_override: null,
-            max_output_tokens_override: null,
-            max_conversations_override: null
-          });
-          await loadUsers();
-        } catch (error) {
-          const status = list.querySelector(`[data-user-status="${CSS.escape(id)}"]`);
-          status.textContent = `リセットに失敗しました: ${error.message}`;
-        }
-      });
-    });
+    list.querySelectorAll('[data-reset-settings]').forEach((button) => button.addEventListener('click', async () => {
+      const id = button.dataset.resetSettings;
+      if (!confirm('このユーザーを全体設定に戻しますか？')) return;
+      try {
+        await callUserManagement({ action: 'set_limits', user_id: id, model_override: null, daily_request_limit_override: null, daily_search_limit_override: null, max_output_tokens_override: null, max_conversations_override: null });
+        await loadUsers();
+      } catch (error) {
+        alert(error.message);
+      }
+    }));
 
-    list.querySelectorAll('[data-delete-user-conversations]').forEach((button) => {
-      button.addEventListener('click', async () => {
-        const id = button.dataset.deleteUserConversations;
-        if (!confirm('このユーザーの会話をすべて削除しますか？この操作は元に戻せません。')) return;
-        try {
-          const result = await callUserManagement({ action: 'delete_user_conversations', user_id: id });
-          alert(`${result.deleted_count ?? 0}件の会話を削除しました。`);
-          await loadUsers();
-        } catch (error) {
-          alert(error.message);
-        }
-      });
-    });
+    list.querySelectorAll('[data-delete-user-conversations]').forEach((button) => button.addEventListener('click', async () => {
+      const id = button.dataset.deleteUserConversations;
+      if (!confirm('このユーザーの会話をすべて削除しますか？この操作は元に戻せません。')) return;
+      try {
+        const result = await callUserManagement({ action: 'delete_user_conversations', user_id: id });
+        alert(`${result.deleted_count ?? 0}件の会話を削除しました。`);
+        await loadUsers();
+      } catch (error) {
+        alert(error.message);
+      }
+    }));
 
-    list.querySelectorAll('[data-status]').forEach((button) => {
-      button.addEventListener('click', async () => {
-        try {
-          await callUserManagement({ action: 'set_status', user_id: button.dataset.id, status: button.dataset.status });
-          await loadUsers();
-        } catch (error) {
-          alert(error.message);
-        }
-      });
-    });
+    list.querySelectorAll('[data-status]').forEach((button) => button.addEventListener('click', async () => {
+      try {
+        await callUserManagement({ action: 'set_status', user_id: button.dataset.id, status: button.dataset.status });
+        await loadUsers();
+      } catch (error) {
+        alert(error.message);
+      }
+    }));
 
-    list.querySelectorAll('[data-delete]').forEach((button) => {
-      button.addEventListener('click', async () => {
-        if (!confirm('このアカウントを削除しますか？')) return;
-        try {
-          await callUserManagement({ action: 'delete', user_id: button.dataset.delete });
-          await loadUsers();
-        } catch (error) {
-          alert(error.message);
-        }
-      });
-    });
+    list.querySelectorAll('[data-delete]').forEach((button) => button.addEventListener('click', async () => {
+      if (!confirm('このアカウントを削除しますか？')) return;
+      try {
+        await callUserManagement({ action: 'delete', user_id: button.dataset.delete });
+        await loadUsers();
+      } catch (error) {
+        alert(error.message);
+      }
+    }));
   }
 
   async function initAdmin() {
     const user = await window.kotohaAuth.requireUser();
     if (!user) return;
 
-    const { data: profile, error: profileError } = await client
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single();
+    const { data: profile, error: profileError } = await client.from('profiles').select('role').eq('id', user.id).single();
     if (profileError || !profile || profile.role !== 'admin') {
       document.querySelector('#admin-guard').textContent = 'このページにアクセスする権限がありません。';
       return;
@@ -253,7 +232,6 @@
 
     document.querySelector('#admin-guard').hidden = true;
     document.querySelector('#admin-content').hidden = false;
-
     await Promise.all([loadSettings(), loadAdminOwnSettings(user.id), loadUsers()]);
 
     document.querySelector('#admin-settings-form').onsubmit = async (event) => {
@@ -280,30 +258,24 @@
       event.preventDefault();
       const status = document.querySelector('#settings-status');
       status.textContent = '保存中…';
-
       const dailyRequestLimit = numberOrNull(document.querySelector('#daily-request-limit').value, 0);
       const dailySearchLimit = numberOrNull(document.querySelector('#daily-search-limit').value, 0);
       const maxOutputTokens = maxTokensOrNull(document.querySelector('#max-output-tokens').value);
       const maxConversations = maxConversationsOrNull(document.querySelector('#max-conversations').value);
-
       if (dailyRequestLimit === null || dailySearchLimit === null || maxOutputTokens === null || maxConversations === null) {
         status.textContent = '全体設定の入力値を確認してください。';
         return;
       }
-
       try {
-        const { error } = await client
-          .from('app_settings')
-          .update({
-            default_model: document.querySelector('#default-model').value,
-            daily_request_limit: dailyRequestLimit,
-            daily_search_limit: dailySearchLimit,
-            max_output_tokens: maxOutputTokens,
-            max_conversations: maxConversations,
-            updated_at: new Date().toISOString(),
-            updated_by: user.id
-          })
-          .eq('id', true);
+        const { error } = await client.from('app_settings').update({
+          default_model: document.querySelector('#default-model').value,
+          daily_request_limit: dailyRequestLimit,
+          daily_search_limit: dailySearchLimit,
+          max_output_tokens: maxOutputTokens,
+          max_conversations: maxConversations,
+          updated_at: new Date().toISOString(),
+          updated_by: user.id
+        }).eq('id', true);
         if (error) throw error;
         status.textContent = '全体設定を保存しました。';
       } catch (error) {

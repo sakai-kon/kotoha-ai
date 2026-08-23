@@ -15,24 +15,30 @@ function extractBearer(request: Request): string | null {
   return value.slice(7).trim() || null;
 }
 
-function textFromAi(result: unknown): string {
-  if (typeof result === 'string') return result;
+function textFromAi(result: unknown): string | null {
+  if (typeof result === 'string') {
+    const text = result.trim();
+    return text || null;
+  }
+
   if (result && typeof result === 'object') {
     const value = result as Record<string, unknown>;
-    if (typeof value.response === 'string') return value.response;
-    if (typeof value.text === 'string') return value.text;
+    if (typeof value.response === 'string' && value.response.trim()) return value.response.trim();
+    if (typeof value.text === 'string' && value.text.trim()) return value.text.trim();
+
     const choices = value.choices;
     if (Array.isArray(choices) && choices[0] && typeof choices[0] === 'object') {
       const choice = choices[0] as Record<string, unknown>;
       const message = choice.message;
       if (message && typeof message === 'object') {
         const content = (message as Record<string, unknown>).content;
-        if (typeof content === 'string') return content;
+        if (typeof content === 'string' && content.trim()) return content.trim();
       }
-      if (typeof choice.text === 'string') return choice.text;
+      if (typeof choice.text === 'string' && choice.text.trim()) return choice.text.trim();
     }
   }
-  return 'AIから有効な回答を取得できませんでした。';
+
+  return null;
 }
 
 async function resolveLimits(admin: ReturnType<typeof createClient>) {
@@ -138,16 +144,10 @@ export default {
         profile.max_output_tokens_override ?? limits.max_output_tokens;
 
       if (!isAdmin) {
-        if (!Number.isFinite(Number(effectiveRequestLimit)) || Number(effectiveRequestLimit) < 1) {
+        const numericLimit = Number(effectiveRequestLimit);
+        if (!Number.isFinite(numericLimit) || numericLimit < 1) {
           return json({ ok: false, error: '現在AIの利用は停止されています。' }, 429);
         }
-
-        const { data: consumed, error: consumeError } = await admin.rpc('consume_daily_request', {
-          p_user_id: userData.user.id,
-          p_limit: Number(effectiveRequestLimit)
-        });
-        if (consumeError) throw consumeError;
-        if (!consumed) return json({ ok: false, error: '今日の利用上限に達しました。' }, 429);
       }
 
       const { data: history, error: historyError } = await admin
@@ -166,18 +166,85 @@ export default {
       if (settingsError) throw settingsError;
 
       const effectiveModel = profile.model_override || settings.default_model;
+      if (typeof effectiveModel !== 'string' || !effectiveModel.startsWith('@cf/')) {
+        return json({ ok: false, error: '利用可能なAIモデルが正しく設定されていません。' }, 500);
+      }
+
       const messages = [...(history ?? []).reverse(), { role: 'user', content: message }]
         .map(item => ({
           role: item.role === 'assistant' ? 'assistant' : 'user',
-          content: item.content
+          content: String(item.content ?? '')
+        }))
+        .filter(item => item.content.length > 0);
+
+      const maxTokens = Number(effectiveMaxOutputTokens);
+      const aiOptions: Record<string, unknown> = { messages };
+      if (Number.isFinite(maxTokens) && maxTokens > 0) {
+        aiOptions.max_completion_tokens = Math.min(Math.floor(maxTokens), 8192);
+      }
+
+      let result: unknown;
+      let aiError: unknown = null;
+
+      try {
+        result = await env.AI.run(effectiveModel, aiOptions);
+      } catch (error) {
+        aiError = error;
+        console.error(JSON.stringify({
+          event: 'workers_ai_first_attempt_failed',
+          model: effectiveModel,
+          user_id: userData.user.id,
+          message: error instanceof Error ? error.message : String(error)
         }));
 
-      const aiOptions: Record<string, unknown> = { messages };
-      const maxTokens = Number(effectiveMaxOutputTokens);
-      if (Number.isFinite(maxTokens) && maxTokens > 0) aiOptions.max_tokens = maxTokens;
+        // 2回目は履歴を除き、最新メッセージだけで再試行する。
+        // 壊れた/特殊な履歴が原因でも新規ユーザーが詰まらないようにする。
+        try {
+          result = await env.AI.run(effectiveModel, {
+            messages: [{ role: 'user', content: message }],
+            ...(Number.isFinite(maxTokens) && maxTokens > 0
+              ? { max_completion_tokens: Math.min(Math.floor(maxTokens), 8192) }
+              : {})
+          });
+          aiError = null;
+        } catch (retryError) {
+          aiError = retryError;
+          console.error(JSON.stringify({
+            event: 'workers_ai_retry_failed',
+            model: effectiveModel,
+            user_id: userData.user.id,
+            message: retryError instanceof Error ? retryError.message : String(retryError)
+          }));
+        }
+      }
 
-      const result = await env.AI.run(effectiveModel, aiOptions);
+      if (aiError || result === undefined) {
+        return json({
+          ok: false,
+          error: 'AIの実行に失敗しました。しばらくしてからもう一度試してください。'
+        }, 502);
+      }
+
       const answer = textFromAi(result);
+      if (!answer) {
+        console.error(JSON.stringify({
+          event: 'workers_ai_empty_response',
+          model: effectiveModel,
+          user_id: userData.user.id
+        }));
+        return json({ ok: false, error: 'AIから回答を取得できませんでした。' }, 502);
+      }
+
+      // AIが成功した場合だけ利用回数を消費する。
+      if (!isAdmin) {
+        const consumed = await admin.rpc('consume_daily_request', {
+          p_user_id: userData.user.id,
+          p_limit: Number(effectiveRequestLimit)
+        });
+        const consumedData = consumed.data;
+        if (consumed.error) throw consumed.error;
+        if (!consumedData) return json({ ok: false, error: '今日の利用上限に達しました。' }, 429);
+      }
 
       const { error: insertError } = await admin.from('messages').insert([
         { conversation_id: conversationId, role: 'user', content: message },
@@ -204,14 +271,15 @@ export default {
         model: effectiveModel,
         request_limit: isAdmin ? null : Number(effectiveRequestLimit),
         search_limit: isAdmin ? null : Number(effectiveSearchLimit),
-        max_output_tokens: maxTokens,
+        max_output_tokens: Number.isFinite(maxTokens) && maxTokens > 0 ? Math.min(Math.floor(maxTokens), 8192) : null,
         admin: isAdmin
       });
     } catch (error) {
-      console.error(JSON.stringify({
-        event: 'kotoha_api_error',
-        message: error instanceof Error ? error.message : String(error)
-      }));
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(JSON.stringify({ event: 'kotoha_api_error', message }));
+      if (message === 'CONVERSATION_LIMIT_REACHED') {
+        return json({ ok: false, error: '会話数の上限に達しています。管理画面で上限を変更できます。' }, 429);
+      }
       return json({ ok: false, error: 'サーバー処理中にエラーが発生しました。' }, 500);
     }
   }

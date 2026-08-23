@@ -8,6 +8,11 @@
   const SUPABASE_URL = String(config.SUPABASE_URL || '').replace(/\/$/, '');
   const SUPABASE_KEY = config.SUPABASE_PUBLISHABLE_KEY || '';
 
+  const MODEL_LIMITS = {
+    '@cf/google/gemma-4-26b-a4b-it': 5,
+    '@cf/meta/llama-3.2-1b-instruct': 10
+  };
+
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'\"]/g, c => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&#34;'
@@ -51,7 +56,6 @@
         ...(options.headers || {})
       }
     });
-
     const text = await response.text();
     let data = null;
     if (text) {
@@ -71,7 +75,7 @@
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ action: 'auth_test' })
-      }), 15000, 'Cloudflare Workerが15秒以内に応答しませんでした。');
+      }), 10000, 'Cloudflare Workerが応答しませんでした。');
       const result = await response.json().catch(() => ({ ok: false, error: 'WorkerからJSON応答を取得できませんでした。' }));
       if (!response.ok || !result.ok) return { ok: false, error: result.error || `Worker error: ${response.status}` };
       return result;
@@ -110,32 +114,49 @@
     if (!conversation) throw new Error('会話が見つかりません。');
     currentConversationId = conversation.id;
     document.querySelector('#conversation-title').textContent = conversation.title || 'チャット';
-
     const messages = await dbFetch('messages?select=role,content,created_at&conversation_id=eq.' + encodeURIComponent(id) + '&order=created_at.asc');
     document.querySelector('#message-list').innerHTML = (messages || []).map(m =>
       `<article class="message ${escapeHtml(m.role)}"><strong>${m.role === 'user' ? 'あなた' : m.role === 'assistant' ? 'Kotoha' : escapeHtml(m.role)}</strong><p>${escapeHtml(m.content)}</p></article>`
     ).join('');
+    document.querySelector('#message-list').scrollTop = document.querySelector('#message-list').scrollHeight;
   }
 
   async function loadUsage() {
     try {
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tokyo' });
-      const usage = await dbFetch('usage_daily?select=request_count,search_count&user_id=eq.' + encodeURIComponent(currentUser.id) + '&usage_date=eq.' + encodeURIComponent(today) + '&limit=1');
-      const policy = await dbFetch('usage_policies?select=daily_request_limit&is_active=eq.true&order=created_at.desc&limit=1');
-      const count = usage?.[0]?.request_count || 0;
-      const limit = policy?.[0]?.daily_request_limit ?? '-';
-      document.querySelector('#usage-summary').textContent = `今日: ${count} / ${limit} 回`;
+      const rows = await dbFetch('usage_model_daily?select=model,request_count&user_id=eq.' + encodeURIComponent(currentUser.id) + '&usage_date=eq.' + encodeURIComponent(today));
+      const counts = Object.fromEntries((rows || []).map(row => [row.model, row.request_count || 0]));
+      const usage = document.querySelector('#usage-summary');
+      if (!usage) return;
+      usage.textContent = `Gemma ${counts['@cf/google/gemma-4-26b-a4b-it'] || 0}/5 · Llama ${counts['@cf/meta/llama-3.2-1b-instruct'] || 0}/10`;
+
+      const selector = document.querySelector('#model-select');
+      if (selector) {
+        for (const option of selector.options) {
+          const used = counts[option.value] || 0;
+          const limit = MODEL_LIMITS[option.value];
+          option.textContent = option.value.includes('gemma-4')
+            ? `Gemma 4 26B · ${Math.max(0, limit - used)}回残り`
+            : `Llama 3.2 1B · ${Math.max(0, limit - used)}回残り`;
+          option.disabled = used >= limit;
+        }
+        const selected = selector.options[selector.selectedIndex];
+        if (selected?.disabled) {
+          const fallback = [...selector.options].find(option => !option.disabled);
+          if (fallback) selector.value = fallback.value;
+        }
+      }
     } catch (error) {
       document.querySelector('#usage-summary').textContent = '利用状況を取得できません';
       console.error('Usage load failed:', error);
     }
   }
 
-  function renderMessage(role, content, thinking = false) {
+  function renderMessage(role, content, streaming = false) {
     const list = document.querySelector('#message-list');
     const article = document.createElement('article');
     article.className = `message ${role}`;
-    if (thinking) article.dataset.thinking = 'true';
+    if (streaming) article.dataset.streaming = 'true';
     article.innerHTML = `<strong>${role === 'user' ? 'あなた' : 'Kotoha'}</strong><p></p>`;
     article.querySelector('p').textContent = content;
     list.appendChild(article);
@@ -143,31 +164,13 @@
     return article;
   }
 
-  function removeThinkingMessage() {
-    document.querySelectorAll('[data-thinking="true"]').forEach(el => el.remove());
-  }
-
-  function extractStreamText(payload) {
-    if (!payload || typeof payload !== 'object') return '';
-    if (typeof payload.response === 'string') return payload.response;
-    if (typeof payload.text === 'string') return payload.text;
-    const choices = payload.choices;
-    if (Array.isArray(choices) && choices[0] && typeof choices[0] === 'object') {
-      const choice = choices[0];
-      if (choice.delta && typeof choice.delta === 'object' && typeof choice.delta.content === 'string') return choice.delta.content;
-      if (choice.message && typeof choice.message === 'object' && typeof choice.message.content === 'string') return choice.message.content;
-      if (typeof choice.text === 'string') return choice.text;
-    }
-    return '';
-  }
-
-  async function sendChatMessage(content, onChunk) {
+  async function sendChatMessage(content, model, onChunk) {
     if (!currentConversationId) await createConversation();
     const token = await getAccessToken();
     const response = await withTimeout(fetch(API_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ conversation_id: currentConversationId, message: content })
+      body: JSON.stringify({ conversation_id: currentConversationId, message: content, model })
     }), 90000, 'AIの応答が90秒以内に完了しませんでした。');
 
     if (!response.ok) {
@@ -194,7 +197,6 @@
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || '';
-
       for (const line of lines) {
         const trimmed = line.trim();
         if (!trimmed.startsWith('data:')) continue;
@@ -202,13 +204,13 @@
         if (!payload || payload === '[DONE]') continue;
         try {
           const parsed = JSON.parse(payload);
-          const part = extractStreamText(parsed);
-          if (part) {
+          const part = parsed?.response || parsed?.text || parsed?.choices?.[0]?.delta?.content || parsed?.choices?.[0]?.message?.content || parsed?.choices?.[0]?.text || '';
+          if (typeof part === 'string' && part) {
             answer += part;
             onChunk(answer);
           }
         } catch {
-          // SSEのコメントや非JSON行は無視する。
+          // Ignore non-JSON SSE lines.
         }
       }
     }
@@ -220,9 +222,6 @@
     try {
       setStatus('JavaScriptを初期化しました。');
       if (!client) throw new Error('Supabaseクライアントが読み込まれていません。');
-      if (!window.kotohaAuth?.requireUser) throw new Error('認証モジュールが読み込まれていません。');
-
-      setStatus('ログイン状態を確認しています…');
       currentUser = await withTimeout(window.kotohaAuth.requireUser(), 10000, 'ログイン状態の確認がタイムアウトしました。');
       if (!currentUser) return;
 
@@ -235,50 +234,43 @@
 
       setStatus('Cloudflare Workerへ接続しています…');
       const workerResult = await verifyWorkerConnection();
-      if (!workerResult.ok) setStatus(`🔴 サーバー接続確認: ${workerResult.error}`);
-      else setStatus(`🟢 サーバー接続確認: 成功（${workerResult.user?.role || 'user'}）`);
+      setStatus(workerResult.ok ? `🟢 サーバー接続確認: 成功（${workerResult.user?.role || 'user'}）` : `🔴 サーバー接続確認: ${workerResult.error}`);
 
-      try {
-        await loadConversations();
-        const first = document.querySelector('.conversation-item');
-        if (first) await openConversation(first.dataset.id);
-      } catch (error) {
-        setStatus(`🔴 会話データ取得エラー: ${error.message}`);
-      }
-
+      await loadConversations();
+      const first = document.querySelector('.conversation-item');
+      if (first) await openConversation(first.dataset.id);
       await loadUsage();
 
       document.querySelector('#chat-form').addEventListener('submit', async event => {
         event.preventDefault();
         const input = document.querySelector('#message-input');
         const button = document.querySelector('#send-button');
+        const selector = document.querySelector('#model-select');
         const content = input.value.trim();
+        const model = selector?.value || '@cf/google/gemma-4-26b-a4b-it';
         if (!content || button.disabled) return;
 
-        let thinkingMessage = null;
+        let assistantMessage = null;
         try {
           setBusy(button, true);
           input.value = '';
-          if (!currentConversationId) await createConversation();
           renderMessage('user', content);
-          thinkingMessage = renderMessage('assistant', '考えています…', true);
-          const answer = await sendChatMessage(content, (partial) => {
-            if (!thinkingMessage) return;
-            thinkingMessage.querySelector('p').textContent = partial || '考えています…';
+          assistantMessage = renderMessage('assistant', '生成中…', true);
+          const answer = await sendChatMessage(content, model, partial => {
+            if (!assistantMessage) return;
+            assistantMessage.querySelector('p').textContent = partial || '生成中…';
             const list = document.querySelector('#message-list');
             list.scrollTop = list.scrollHeight;
           });
-
-          removeThinkingMessage();
-          if (answer) renderMessage('assistant', answer);
+          assistantMessage.querySelector('p').textContent = answer || 'AIから有効な回答を取得できませんでした。';
+          assistantMessage.removeAttribute('data-streaming');
           await openConversation(currentConversationId);
           await loadConversations();
           await loadUsage();
           setStatus('🟢 送信完了');
         } catch (error) {
-          removeThinkingMessage();
+          assistantMessage?.remove();
           input.value = content;
-          console.error('Kotoha chat error:', error);
           setStatus(`🔴 ${error.message || 'メッセージ送信に失敗しました。'}`);
         } finally {
           setBusy(button, false);
@@ -293,6 +285,5 @@
 
   window.addEventListener('error', event => setStatus(`🔴 JavaScriptエラー: ${event.message || '不明なエラー'}`));
   window.addEventListener('unhandledrejection', event => setStatus(`🔴 非同期エラー: ${event.reason?.message || String(event.reason || '不明なエラー')}`));
-
   initChat();
 })();

@@ -41,7 +41,6 @@
     } catch (error) {
       console.error('Sign out failed:', error);
     } finally {
-      // GitHub Pages上で古いセッション情報が残っても、ログイン画面へ確実に戻す。
       try {
         Object.keys(localStorage)
           .filter((key) => key.startsWith('sb-') || key.includes('supabase'))
@@ -77,7 +76,6 @@
     }
   }
 
-  // 先に公開しておくことで、他のページ用スクリプトとの読み込み競合を防ぐ。
   window.kotohaAuth = { getCurrentUser, requireUser, signOut, getAppUrl };
 
   const authForm = document.querySelector('#auth-form');
@@ -88,19 +86,36 @@
     authForm.addEventListener('submit', async (event) => {
       event.preventDefault();
       if (!authForm.reportValidity()) return;
-      const username = document.querySelector('#username').value.trim();
-      const password = document.querySelector('#password').value;
+
+      const usernameInput = document.querySelector('#username');
+      const passwordInput = document.querySelector('#password');
+      const username = String(usernameInput?.value || '').trim().toLowerCase();
+      const password = String(passwordInput?.value || '');
+
       if (!username || !password) return;
+
       setAuthBusy(true);
       setStatus('ログインしています…');
-      const email = `${username.toLowerCase()}@kotoha.local`;
-      const { error } = await client.auth.signInWithPassword({ email, password });
-      if (error) {
-        console.error('Password login failed:', error);
-        setStatus('IDまたはパスワードが正しくありません。');
+
+      // 管理画面で作成するアカウントもこの形式で統一する。
+      const email = `${username}@kotoha.local`;
+
+      const { data, error } = await client.auth.signInWithPassword({
+        email,
+        password
+      });
+
+      if (error || !data?.user) {
+        console.error('Password login failed:', {
+          status: error?.status,
+          message: error?.message,
+          code: error?.code
+        });
+        setStatus('IDまたはパスワードが正しくありません。管理者が作成したIDは、入力したIDの大文字・小文字を気にせず小文字として認証されます。');
         setAuthBusy(false);
         return;
       }
+
       location.replace(new URL('chat.html', getAppUrl()).href);
     });
   }
@@ -115,7 +130,6 @@
     });
   }
 
-  // ログアウトは各ページ共通でここで登録する。
   if (signoutButton) {
     signoutButton.addEventListener('click', async (event) => {
       event.preventDefault();
@@ -125,7 +139,6 @@
       try {
         await signOut();
       } finally {
-        // 遷移に失敗した場合だけ元へ戻す。
         setTimeout(() => {
           signoutButton.disabled = false;
           signoutButton.textContent = originalText || 'ログアウト';

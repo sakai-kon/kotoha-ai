@@ -13,9 +13,7 @@
     <h1>管理ダッシュボード</h1>
     <button id="signout-button" class="button secondary" type="button">ログアウト</button>
   </header>
-
   <div id="admin-guard" class="status">権限を確認しています…</div>
-
   <section id="admin-content" hidden class="dashboard-grid">
     <article class="panel">
       <h2>自分のAI設定（管理者）</h2>
@@ -30,7 +28,7 @@
         <label>自分の最大出力トークン
           <input id="admin-max-output-tokens" type="number" min="64" max="8192" placeholder="全体設定を使用">
         </label>
-        <p class="status">管理者の質問回数上限はありません。</p>
+        <p class="status">管理者は質問回数・会話数の上限なし。</p>
         <button class="button primary" type="submit">自分の設定を保存</button>
       </form>
       <p id="admin-settings-status" class="status"></p>
@@ -54,6 +52,9 @@
         <label>最大出力トークン
           <input id="max-output-tokens" type="number" min="64" max="8192">
         </label>
+        <label>保有できる会話数
+          <input id="max-conversations" type="number" min="1" step="1">
+        </label>
         <button class="button primary" type="submit">全体設定を保存</button>
       </form>
       <p id="settings-status" class="status"></p>
@@ -68,6 +69,12 @@
         <label>表示名
           <input id="new-display-name">
         </label>
+        <label>権限
+          <select id="new-role">
+            <option value="user">通常ユーザー</option>
+            <option value="admin">管理者</option>
+          </select>
+        </label>
         <label>初期パスワード
           <input id="new-password" type="password" minlength="8" required>
         </label>
@@ -77,7 +84,7 @@
     </article>
 
     <article class="panel">
-      <h2>アカウントごとのモデル・利用制限</h2>
+      <h2>アカウントごとのモデル・利用制限・会話管理</h2>
       <p class="status">空欄または「全体設定を使用」にすると全体設定を継承します。</p>
       <div id="user-list"></div>
     </article>
@@ -93,10 +100,10 @@
     </article>
   </section>
 </main>
-<script src="js/config.js?v=3"></script>
+<script src="js/config.js?v=4"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/supabase.js?v=3"></script>
+<script src="js/supabase.js?v=4"></script>
 <script src="js/auth.js?v=4"></script>
-<script src="js/admin.js?v=4"></script>
+<script src="js/admin.js?v=5"></script>
 </body>
 </html>

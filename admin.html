@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>管理 | Kotoha AI</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=6">
 </head>
 <body>
 <main class="dashboard-shell">
@@ -13,17 +13,16 @@
     <h1>管理ダッシュボード</h1>
     <button id="signout-button" class="button secondary" type="button">ログアウト</button>
   </header>
+
   <div id="admin-guard" class="status">権限を確認しています…</div>
+
   <section id="admin-content" hidden class="dashboard-grid">
     <article class="panel">
       <h2>自分のAI設定（管理者）</h2>
+      <p class="status">管理者はWorkers AIのText Generationモデルを自由に選択できます。プラン対象外のモデルはCloudflare側で拒否される場合があります。</p>
       <form id="admin-settings-form" class="stack">
         <label>自分が使うモデル
-          <select id="admin-model">
-            <option value="">全体設定を使用</option>
-            <option value="@cf/zai-org/glm-4.7-flash">GLM-4.7 Flash</option>
-            <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B</option>
-          </select>
+          <select id="admin-model"></select>
         </label>
         <label>自分の最大出力トークン
           <input id="admin-max-output-tokens" type="number" min="64" max="8192" placeholder="全体設定を使用">
@@ -36,11 +35,12 @@
 
     <article class="panel">
       <h2>全体設定</h2>
+      <p class="status">通常ユーザーは「標準」と「高速」の2モデルだけを利用できます。応答速度を優先するため、通常ユーザーの履歴は直近8メッセージ、通常ユーザーの最大出力は原則512トークンに抑えます。</p>
       <form id="settings-form" class="stack">
         <label>通常ユーザーの既定モデル
           <select id="default-model">
-            <option value="@cf/zai-org/glm-4.7-flash">GLM-4.7 Flash</option>
-            <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast">Llama 3.3 70B</option>
+            <option value="@cf/google/gemma-4-26b-a4b-it">Gemma 4 26B · 標準</option>
+            <option value="@cf/zai-org/glm-4.7-flash">GLM-4.7 Flash · 高速</option>
           </select>
         </label>
         <label>1日の質問上限
@@ -85,7 +85,7 @@
 
     <article class="panel">
       <h2>アカウントごとのモデル・利用制限・会話管理</h2>
-      <p class="status">空欄または「全体設定を使用」にすると全体設定を継承します。</p>
+      <p class="status">通常ユーザーは標準/高速の2モデルのみ。管理者アカウントは全モデルを選択できます。空欄で全体設定を継承します。</p>
       <div id="user-list"></div>
     </article>
 
@@ -100,10 +100,10 @@
     </article>
   </section>
 </main>
-<script src="js/config.js?v=4"></script>
+<script src="js/config.js?v=5"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/supabase.js?v=4"></script>
-<script src="js/auth.js?v=4"></script>
-<script src="js/admin.js?v=5"></script>
+<script src="js/supabase.js?v=5"></script>
+<script src="js/auth.js?v=5"></script>
+<script src="js/admin.js?v=6"></script>
 </body>
 </html>

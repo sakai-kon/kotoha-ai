@@ -4,14 +4,20 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kotoha AI</title>
-  <link rel="stylesheet" href="css/style.css?v=6" />
+  <link rel="stylesheet" href="css/style.css?v=9" />
   <style>
-    .composer-controls{grid-column:1/-1;display:flex;align-items:center;margin-bottom:2px}
-    .model-picker{display:flex;align-items:center;gap:8px;width:auto;font-size:.8rem}
-    .model-picker span{white-space:nowrap}
-    .model-picker select{width:185px;min-width:185px;padding:7px 10px;border-radius:9px;font-size:.88rem}
-    .composer textarea{min-height:110px;max-height:300px;resize:vertical;line-height:1.55}
-    .composer .button{align-self:end;min-height:46px}
+    .composer{padding:12px 24px 4px;display:block}
+    .composer-box{width:min(100%,900px);margin:0 auto;border:1px solid var(--border);background:var(--panel);border-radius:18px;box-shadow:0 10px 35px rgba(0,0,0,.18);padding:10px 12px 8px}
+    .composer textarea{display:block;width:100%;min-height:54px;max-height:180px;resize:none;border:0;background:transparent;box-shadow:none;border-radius:12px;padding:8px 8px 4px;font-size:1rem;line-height:1.55}
+    .composer textarea:focus{border:0;box-shadow:none}
+    .composer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:6px}
+    .composer-left{display:flex;align-items:center;min-width:0}
+    .model-picker{display:flex;align-items:center;gap:6px;width:auto;color:var(--muted);font-size:.76rem}
+    .model-picker-label{white-space:nowrap}
+    .model-picker select{width:170px;min-width:0;padding:6px 28px 6px 9px;border-radius:8px;font-size:.8rem;background:rgba(255,255,255,.035)}
+    .send-button{width:34px;height:34px;min-width:34px;padding:0;border:0;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:#071020;font-size:1.05rem;font-weight:900;cursor:pointer;transition:transform .15s ease,opacity .15s ease}
+    .send-button:hover{transform:translateY(-1px)}
+    .send-button:disabled{opacity:.45;cursor:wait;transform:none}
     .message{max-width:860px;line-height:1.7}
     .message-content{margin:8px 0 0;overflow-wrap:anywhere}
     .message-content p{margin:0 0 .75em}.message-content p:last-child{margin-bottom:0}
@@ -24,7 +30,7 @@
     .message-content pre code{display:block;background:transparent;padding:0;white-space:pre;font-size:.88rem}
     .message-content a{color:var(--accent-2);text-decoration:underline}
     .message[data-streaming="true"] .message-content{min-height:1.4em}
-    @media(max-width:760px){.composer{grid-template-columns:1fr}.composer textarea{min-height:120px}.composer .button{width:100%}.model-picker select{width:165px;min-width:165px}}
+    @media(max-width:760px){.composer{padding:8px 10px 3px}.composer-box{border-radius:16px;padding:8px 10px 7px}.composer textarea{min-height:48px;font-size:.96rem}.model-picker select{width:150px;font-size:.78rem}.send-button{width:32px;height:32px;min-width:32px}.composer-note{margin-bottom:8px}}
   </style>
 </head>
 <body class="app-page">
@@ -49,17 +55,21 @@
     <section id="message-list" class="message-list" aria-live="polite"></section>
 
     <form id="chat-form" class="composer">
-      <div class="composer-controls">
-        <label class="model-picker" for="model-select">
-          <span>モデル</span>
-          <select id="model-select">
-            <option value="@cf/google/gemma-4-26b-a4b-it">Gemma 4 26B · 5回/日</option>
-            <option value="@cf/meta/llama-3.2-1b-instruct">Llama 3.2 1B · 10回/日</option>
-          </select>
-        </label>
+      <div class="composer-box">
+        <textarea id="message-input" rows="1" placeholder="Kotoha AIに質問…" required></textarea>
+        <div class="composer-toolbar">
+          <div class="composer-left">
+            <label class="model-picker" for="model-select">
+              <span class="model-picker-label">モデル</span>
+              <select id="model-select">
+                <option value="@cf/google/gemma-4-26b-a4b-it">Gemma 4 26B · 5回/日</option>
+                <option value="@cf/meta/llama-3.2-1b-instruct">Llama 3.2 1B · 10回/日</option>
+              </select>
+            </label>
+          </div>
+          <button id="send-button" class="send-button" type="submit" aria-label="送信" title="送信">↑</button>
+        </div>
       </div>
-      <textarea id="message-input" rows="4" placeholder="Kotoha AIに質問…" required></textarea>
-      <button id="send-button" class="button primary" type="submit">送信</button>
     </form>
 
     <p class="composer-note">Markdown対応 · 回答は生成された部分からリアルタイムに表示されます。</p>

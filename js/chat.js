@@ -323,7 +323,51 @@
       }
     }
 
+    // Flush any final buffered SSE event when the stream closes without a trailing newline.
+    buffer += decoder.decode();
+    if (buffer.trim()) {
+      const trimmed = buffer.trim();
+      if (trimmed.startsWith('data:')) {
+        const payload = trimmed.slice(5).trim();
+        if (payload && payload !== '[DONE]') {
+          try {
+            const parsed = JSON.parse(payload);
+            const part = parsed?.response || parsed?.text || parsed?.choices?.[0]?.delta?.content || parsed?.choices?.[0]?.message?.content || parsed?.choices?.[0]?.text || '';
+            if (typeof part === 'string' && part) {
+              answer += part;
+              onChunk(answer);
+            }
+          } catch {
+            // Ignore malformed final SSE payloads.
+          }
+        }
+      }
+    }
+
     return answer.trim();
+  }
+
+  async function waitForSavedMessages(conversationId, expectedUserMessage, expectedAnswer, timeoutMs = 10000) {
+    const started = Date.now();
+    while (Date.now() - started < timeoutMs) {
+      try {
+        const messages = await dbFetch('messages?select=role,content,created_at&conversation_id=eq.' + encodeURIComponent(conversationId) + '&order=created_at.asc');
+        const rows = Array.isArray(messages) ? messages : [];
+        const lastUser = [...rows].reverse().find(row => row.role === 'user');
+        const lastAssistant = [...rows].reverse().find(row => row.role === 'assistant');
+        if (
+          lastUser?.content === expectedUserMessage &&
+          typeof lastAssistant?.content === 'string' &&
+          lastAssistant.content.trim() === String(expectedAnswer || '').trim()
+        ) {
+          return true;
+        }
+      } catch (error) {
+        console.warn('Waiting for saved messages failed:', error);
+      }
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+    return false;
   }
 
   async function initChat() {
@@ -364,18 +408,37 @@
           input.value = '';
           renderMessage('user', content);
           assistantMessage = renderMessage('assistant', '生成中…', true);
+
           const answer = await sendChatMessage(content, model, partial => {
             if (!assistantMessage) return;
             assistantMessage.querySelector('.message-content').innerHTML = markdownToHtml(partial || '生成中…');
             const list = document.querySelector('#message-list');
             list.scrollTop = list.scrollHeight;
           });
-          assistantMessage.querySelector('.message-content').innerHTML = markdownToHtml(answer || 'AIから有効な回答を取得できませんでした。');
+
+          const finalAnswer = String(answer || '').trim();
+          if (!finalAnswer) {
+            throw new Error('AIから有効な回答を取得できませんでした。');
+          }
+
+          assistantMessage.querySelector('.message-content').innerHTML = markdownToHtml(finalAnswer);
           assistantMessage.removeAttribute('data-streaming');
-          await openConversation(currentConversationId);
-          await loadConversations();
+
+          // Worker側のバックグラウンド保存を待ってから履歴を再同期する。
+          const saved = await waitForSavedMessages(
+            currentConversationId,
+            content,
+            finalAnswer,
+            10000
+          );
+
+          if (saved) {
+            await openConversation(currentConversationId);
+            await loadConversations();
+          }
+
           await loadUsage();
-          setStatus('🟢 送信完了');
+          setStatus(saved ? '🟢 送信完了・保存完了' : '🟢 送信完了（保存同期待ち）');
         } catch (error) {
           assistantMessage?.remove();
           input.value = content;
